@@ -1,0 +1,10 @@
+.env
+node_modules/
+*.xlsx1
+*.csv
+y
+y.pub
+id_new_project
+id_new_project.pub
+fix_indent.py
+test.xlsl
