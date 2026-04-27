@@ -14,6 +14,7 @@ from pathlib import Path
 from datetime import timedelta
 from django.db.backends.signals import connection_created
 from django.dispatch import receiver
+import os
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -28,8 +29,9 @@ SECRET_KEY = 'django-insecure-2$mt_=%bnl6p2f7fd+n0!t%j*q9k6spaw&qn&qw+ywxis2qwpz
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = False
 
-ALLOWED_HOSTS = ['inventory.oticgs.com', 'localhost', '127.0.0.1']
+# ALLOWED_HOSTS = ['inventory.oticgs.com', 'localhost', '127.0.0.1', '0.0.0.0']
 
+ALLOWED_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0']
 
 # Application definition
 INSTALLED_APPS = [
@@ -56,9 +58,20 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
+# CORS_ALLOWED_ORIGINS = [
+#     "https://oticgs.com",
+#     "https://www.oticgs.com",
+# ]
+
 CORS_ALLOWED_ORIGINS = [
-    "https://oticgs.com",
-    "https://www.oticgs.com",
+   "http://localhost:8000",
+    "http://127.0.0.1:8000",
+]
+
+
+CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
 ]
 
 ROOT_URLCONF = 'ims.urls'
@@ -84,16 +97,40 @@ WSGI_APPLICATION = 'ims.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.postgresql',
+#         'NAME': 'inventory_db',
+#         'USER': 'inventory_user',
+#         'PASSWORD': 'Inventoryapp',
+#         'HOST': '127.0.0.1',
+#         'PORT': '5432',
+#     }
+# }
+
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.postgresql',
+#         'NAME': os.environ.get('DB_NAME', 'postgres'),
+#         'USER': os.environ.get('DB_USER', 'postgres'),
+#         'PASSWORD': os.environ.get('DB_PASS', 'postgres'),
+#         'HOST': os.environ.get('DB_HOST', 'db'), # This matches the service name in docker-compose
+#         'PORT': '5432',
+#     }
+# }
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'inventory_db',
-        'USER': 'inventory_user',
-        'PASSWORD': 'Inventoryapp',
-        'HOST': '127.0.0.1',
+        'NAME': 'postgres',
+        'USER': 'postgres',
+        'PASSWORD': 'postgres',
+        'HOST': 'db',  # This tells Django to look at the Docker container, not the internet
         'PORT': '5432',
     }
 }
+
+
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
 
@@ -147,6 +184,11 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticated',
     ),
 }
+
+CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+]
 
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),

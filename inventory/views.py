@@ -1380,7 +1380,7 @@ class DashboardSummaryView(APIView):
         total_revenue = Sale.objects.exclude(payment_status='pending').aggregate(total=Sum("total_cost"))["total"] or 0
         tools_count = Tool.objects.filter(stock__gt=0).count()
         staff_count = User.objects.filter(role="staff").count()
-        active_customers = Customer.objects.filter(is_activated=True).count()
+        active_customers = Sale.objects.exclude(payment_status='pending').filter(payment_plan="Yes").values('phone').distinct().count()
 
         today = timezone.now()
         month_start = today.replace(day=1)
@@ -1414,9 +1414,14 @@ class DashboardSummaryView(APIView):
 
         # ✅ FIXED: Low stock should only show items that actually have stock
         low_stock_items = list(
-            Tool.objects.filter(stock__lte=5, stock__gt=0)  # Only items with stock
-            .values("id", "name", "code", "category", "stock")[:5]
+            Tool.objects.values("name", "category")
+            .annotate(total_stock=Sum("stock"))
+            .filter(total_stock__gt=0, total_stock__lt=5)
+            .order_by("total_stock")[:10]
         )
+        # Rename total_stock to stock so frontend receives consistent field name
+        for item in low_stock_items:
+            item["stock"] = item.pop("total_stock")
 
         # Top selling tools
         top_selling_tools = (
@@ -1443,26 +1448,24 @@ class DashboardSummaryView(APIView):
             })
 
         # Expiring receivers - only show items with stock
-        thirty_days_from_now = timezone.now().date() + timedelta(days=30)
-        expiring_receivers = (
-            Tool.objects
+        thirty_days_from_now = timezone.now() + timedelta(days=30)
+        expiring_codes = (
+            ActivationCode.objects
             .filter(
-                category="Receiver",
                 expiry_date__isnull=False,
-                expiry_date__gt=timezone.now().date(),
+                expiry_date__gt=timezone.now(),
                 expiry_date__lte=thirty_days_from_now,
-                stock__gt=0  # Only show items that are in stock
+                status__in=["assigned", "activated"]
             )
-            .values("name", "code", "expiry_date")
             .order_by("expiry_date")[:10]
         )
-        
+
         expiring_receivers_data = []
-        for receiver in expiring_receivers:
+        for code in expiring_codes:
             expiring_receivers_data.append({
-                "name": receiver["name"],
-                "serialNumber": receiver["code"],
-                "expirationDate": receiver["expiry_date"].isoformat() if receiver["expiry_date"] else None
+                "name": code.receiver_serial or "Unknown",
+                "serialNumber": code.receiver_serial or "—",
+                "expirationDate": code.expiry_date.isoformat() if code.expiry_date else None,
             })
 
         return Response(

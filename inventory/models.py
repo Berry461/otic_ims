@@ -428,6 +428,7 @@ class EquipmentType(models.Model):
     name = models.CharField(max_length=100)
     default_cost = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     naira_cost = models.DecimalField(max_digits=15, decimal_places=2, blank=True, null=True)
+    exchange_rate = models.DecimalField(max_digits=10, decimal_places=4, blank=True, null=True)
     category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, default="Receiver")
     description = models.TextField(blank=True, null=True)
     invoice_number = models.CharField(max_length=100, blank=True, null=True)  # NEW FIELD
@@ -529,13 +530,30 @@ class Sale(models.Model):
     def save(self, *args, **kwargs):
         """Auto-generate invoice number on creation."""
         if not self.invoice_number:
-            self.invoice_number = f"INV-{''.join(random.choices(string.ascii_uppercase + string.digits, k=6))}"
-        
+            year = timezone.now().year
+            # Get the highest existing invoice number for this year
+            last = (
+                Sale.objects
+                .filter(invoice_number__startswith=f"{year}/INV/")
+                .order_by("-invoice_number")
+                .first()
+            )
+            if last and last.invoice_number:
+                try:
+                    last_seq = int(last.invoice_number.split("/")[-1])
+                except (ValueError, IndexError):
+                    last_seq = 0
+            else:
+                last_seq = 0
+
+            next_seq = last_seq + 1
+            self.invoice_number = f"{year}/INV/{str(next_seq).zfill(5)}"
+
         # Ensure installment fields are cleared when payment plan is "No"
         if self.payment_plan == "No":
             self.initial_deposit = None
             self.payment_months = None
-            
+
         super().save(*args, **kwargs)
 
     @property
