@@ -17,7 +17,7 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.shortcuts import get_object_or_404
-from django.db.models import Sum, Count, Max, Q, Case, When, F, FloatField
+from django.db.models import Sum, Count, Max, Q, Case, When, F, FloatField, Subquery, OuterRef
 from django.core.mail import send_mail, BadHeaderError
 from django.utils import timezone
 from rest_framework.exceptions import PermissionDenied
@@ -240,7 +240,33 @@ class CustomerListView(generics.ListAPIView):
     search_fields = ['name', 'email', 'phone']
 
     def get_queryset(self):
-        return Customer.objects.all().order_by("-id")
+        from django.db.models import Sum, FloatField, OuterRef, Subquery
+        from django.db.models.functions import Coalesce
+
+        sort_by = self.request.query_params.get('sort_by', '')
+
+        # Subquery: sum total_cost of all non-draft sales matching this customer's phone
+        sales_total = Sale.objects.filter(
+            phone=OuterRef('phone'),
+            payment_status__in=['completed', 'ongoing', 'overdue']
+        ).values('phone').annotate(
+            total=Sum('total_cost')
+        ).values('total')
+
+        queryset = Customer.objects.annotate(
+            lifetime_value=Coalesce(
+                Subquery(sales_total, output_field=FloatField()),
+                0.0,
+                output_field=FloatField()
+            )
+        )
+
+        if sort_by == 'lifetime_value':
+            return queryset.order_by('-lifetime_value')
+        elif sort_by == 'lifetime_value_asc':
+            return queryset.order_by('lifetime_value')
+
+        return queryset.order_by('-id')
     
 # ----------------------------
 # CUSTOMER OWING/INSTALLMENT TRACKING
@@ -981,9 +1007,14 @@ class SaleListCreateView(generics.ListCreateAPIView):
                     (Q(last_payment_date__isnull=True) & Q(date_sold__lt=ninety_days_ago))
                 )
             )
+            
         elif status_filter:
             queryset = queryset.filter(payment_status__iexact=status_filter)
 
+        exclude_status = self.request.query_params.get('exclude_status', '').strip()
+        if exclude_status:
+            queryset = queryset.exclude(payment_status__iexact=exclude_status)
+            
         if search_query:
             queryset = queryset.filter(
                 Q(name__icontains=search_query) |
@@ -1049,7 +1080,15 @@ class SaleListCreateView(generics.ListCreateAPIView):
         elif payment_plan == 'Yes':
             new_status = 'ongoing'
         else:
-            new_status = 'completed'
+            # Only mark completed if deposit covers full cost
+            total_cost = float(self.request.data.get('total_cost') or 0)
+            initial_deposit = float(self.request.data.get('initial_deposit') or 0)
+            if total_cost > 0 and initial_deposit >= total_cost:
+                new_status = 'completed'
+            elif total_cost > 0 and initial_deposit > 0:
+                new_status = 'ongoing'
+            else:
+                new_status = 'completed'
 
         # 4. Look up customer email by phone to store on the Sale record
         phone_from_form = self.request.data.get('phone', '')
@@ -1077,8 +1116,13 @@ class SaleListCreateView(generics.ListCreateAPIView):
                 email=customer_email,
             )
 
-        # 6. Handle Items
+        # 6. For completed sales with no initial_deposit, freeze it to total_cost
         sale = serializer.instance
+        if sale.payment_status == 'completed' and not sale.initial_deposit:
+            Sale.objects.filter(pk=sale.pk).update(initial_deposit=sale.total_cost)
+            sale.refresh_from_db()  # reload so sale.initial_deposit reflects the new value
+
+        # 7. Handle Items
         items_raw_data = self.request.data.get('items', [])
         for i, item in enumerate(sale.items.all()):
             if i < len(items_raw_data):
@@ -1558,7 +1602,7 @@ class PaymentListCreateView(generics.ListCreateAPIView):
 
     # ── THE FIX: Auto-update the Sale when a Payment is logged ──
     def perform_create(self, serializer):
-        from django.db.models import Sum # Make sure this is imported at the top of your file!
+        from django.db.models import Sum
 
         # 1. Save the new payment log to the database
         payment = serializer.save()
@@ -1566,36 +1610,48 @@ class PaymentListCreateView(generics.ListCreateAPIView):
         # 2. If this payment is attached to a Sale, update the Sale's status
         if payment.sale:
             sale = payment.sale
-            
-            # Safely get the base numbers
+
+            # Never modify initial_deposit for completed sales —
+            # it stays None forever for point-of-sale full payments
+            if sale.payment_status == 'completed':
+                total_cost = float(sale.total_cost or 0.0)
+                original_deposit = float(sale.initial_deposit or 0.0)
+                total_logged = float(
+                    Payment.objects.filter(sale=sale)
+                    .aggregate(total=Sum('amount'))['total'] or 0
+                )
+                new_total_paid = original_deposit + total_logged
+                if new_total_paid < total_cost:
+                    sale.payment_status = 'ongoing'
+                sale.save(update_fields=['payment_status'])
+
+                try:
+                    from inventory.models import Customer, sync_single_customer
+                    customer = Customer.objects.filter(phone=sale.phone).first()
+                    if customer:
+                        sync_single_customer(customer)
+                except Exception as e:
+                    print(f'Customer sync error: {e}')
+                return  # exit early — never touch initial_deposit
+
+            # Non-completed sales — normal flow
             initial_deposit = float(sale.initial_deposit or 0.0)
             total_cost = float(sale.total_cost or 0.0)
-            
-            # Sum up ALL payment logs attached to this sale (including the one we just saved)
-            logged_payments_sum = sale.payment_set.aggregate(total=Sum('amount'))['total'] or 0.0
-            
-            # Calculate true total paid: Initial Deposit + All Subsequent Logged Payments
+            logged_payments_sum = sale.payment_set.aggregate(
+                total=Sum('amount')
+            )['total'] or 0.0
             new_total_paid = initial_deposit + float(logged_payments_sum)
-            
-            # 🚨 NOTICE: We completely removed `sale.initial_deposit = str(new_total_paid)`!
-            # The initial_deposit remains untouched forever.
 
-            # 3. Automatically update the status based on the new true balance
             today = timezone.localdate()
-            
             if new_total_paid >= total_cost:
                 sale.payment_status = 'completed'
             elif sale.due_date and today >= sale.due_date:
-                # ABSOLUTE OVERDUE RULE
                 sale.payment_status = 'overdue'
             else:
-                # ONGOING RULE
                 sale.payment_status = 'ongoing'
-                
-            # Save the status changes to the Sale!
+
             sale.save()
 
-            # EXPLICIT SYNC: Force customer update after every payment
             try:
                 from inventory.models import Customer, sync_single_customer
                 customer = Customer.objects.filter(phone=sale.phone).first()
@@ -1608,6 +1664,37 @@ class PaymentDetailView(generics.RetrieveUpdateDestroyAPIView):
     queryset = Payment.objects.all()
     serializer_class = PaymentSerializer
     permission_classes = [IsOwnerOrAdmin]
+
+    def perform_update(self, serializer):
+        from django.db.models import Sum
+
+        payment = serializer.save()
+
+        if payment.sale:
+            sale = payment.sale
+
+            # Never modify initial_deposit for completed sales
+            if sale.payment_status == 'completed':
+                sale.save(update_fields=['payment_status'])
+                return
+
+            # Non-completed — recalculate from frozen deposit + all logged payments
+            original_deposit = float(sale.initial_deposit or 0.0)
+            total_logged = float(
+                Payment.objects.filter(sale=sale)
+                .aggregate(total=Sum("amount"))["total"] or 0
+            )
+            new_total_paid = original_deposit + total_logged
+            total_cost = float(sale.total_cost or 0.0)
+
+            if new_total_paid >= total_cost:
+                sale.payment_status = 'completed'
+            elif sale.due_date and timezone.localdate() >= sale.due_date:
+                sale.payment_status = 'overdue'
+            else:
+                sale.payment_status = 'ongoing'
+
+            sale.save(update_fields=['payment_status'])
 
 
 class PaymentSummaryView(APIView):
@@ -1647,26 +1734,42 @@ class PaymentSummaryView(APIView):
             )
         )
 
+        logged_payments_subquery = Subquery(
+            Payment.objects.filter(sale=OuterRef('pk'))
+            .values('sale')
+            .annotate(total=Sum('amount'))
+            .values('total')[:1]
+        )
+
+        all_sales = all_sales.annotate(
+            logged_payments_total=Coalesce(
+                logged_payments_subquery, 0.0, output_field=FloatField()
+            )
+        )
+
+        safe_logged = F('logged_payments_total')
+        safe_total_paid = safe_deposit + safe_logged  # initial_deposit + all logged payments
+
         aggregations = all_sales.aggregate(
             money_received=Sum(
                 Case(
                     When(payment_status__iexact='completed', then=safe_cost),
-                    When(payment_status__in=['ongoing', 'installment'], then=safe_deposit),
-                    When(payment_status__iexact='overdue', then=safe_deposit),
+                    When(payment_status__in=['ongoing', 'pending', 'installment'], then=safe_total_paid),
+                    When(payment_status__iexact='overdue', then=safe_total_paid),
                     default=0.0,
                     output_field=FloatField()
                 )
             ),
             receivables=Sum(
                 Case(
-                    When(payment_status__in=['ongoing', 'installment', 'overdue'], then=safe_cost - safe_deposit),
+                    When(payment_status__in=['ongoing', 'pending', 'installment', 'overdue'], then=safe_cost - safe_total_paid),
                     default=0.0,
                     output_field=FloatField()
                 )
             ),
             overdue_amount=Sum(
                 Case(
-                    When(is_overdue_logic, then=safe_cost - safe_deposit),
+                    When(is_overdue_logic, then=safe_cost - safe_total_paid),
                     default=0.0,
                     output_field=FloatField()
                 )

@@ -304,9 +304,11 @@ class QuotationSerializer(serializers.ModelSerializer):
     
     
 class CustomerSerializer(serializers.ModelSerializer):
+    lifetime_value = serializers.FloatField(read_only=True, default=0)
+    
     class Meta:
         model = Customer
-        fields = ["id", "name", "phone", "email", "state", "is_activated"]
+        fields = ["id", "name", "phone", "email", "state", "is_activated",'lifetime_value']
 
 class CustomerOwingSerializer(serializers.ModelSerializer):
     id = serializers.CharField(source='user.id', read_only=True) if not serializers.CharField else serializers.CharField(read_only=True)
@@ -350,7 +352,7 @@ class PaymentSerializer(serializers.ModelSerializer):
             "payment_method", "payment_reference", "payment_date", "status", 
             "payment_status"
         ]
-        read_only_fields = ["customer", "payment_date", "status"]
+        read_only_fields = ["customer", "status"]
 
     def get_items(self, obj):
         if obj.sale:

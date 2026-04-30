@@ -84,7 +84,8 @@ class Customer(models.Model):
     STATUS_CHOICES = [
         ('ongoing', 'Ongoing'),
         ('overdue', 'Overdue'),
-        ('fully-paid', 'Fully Paid')
+        ('fully-paid', 'Fully Paid'),
+        ('credit', 'Credit'),
     ]
     # ... (keep all the other fields exactly the same until you hit status)
     status = models.CharField(
@@ -154,7 +155,7 @@ class Customer(models.Model):
         # Auto-calculate amount_left and progress before saving
         if self.total_selling_price > 0:
             self.amount_left = self.total_selling_price - self.amount_paid
-            self.progress = int((self.amount_paid / self.total_selling_price) * 100)
+            self.progress = min(int((self.amount_paid / self.total_selling_price) * 100), 100)
             
             # Auto-update status based on amounts and dates
             self.update_status()
@@ -174,8 +175,13 @@ class Customer(models.Model):
         except ImportError:
             pass 
 
-        # 1. Check if fully paid
-        if self.amount_left <= 0:
+        # 1. Check if overpaid — company owes customer
+        if self.amount_left < 0:
+            self.status = 'credit'
+            return
+
+        # 2. Check if exactly fully paid
+        if self.amount_left == 0:
             self.status = 'fully-paid'
             return
             
@@ -254,7 +260,7 @@ class Tool(models.Model):
         ("Total Station", "Total Station"),
         ("Level", "Level"),
         ("Drones", "Drones"),
-        ("EcoSounder", "EcoSounder"),
+        ("EchoSounder", "EchoSounder"),
         ("Laser Scanner", "Laser Scanner"),
         ("Other", "Other"),
     )
@@ -420,7 +426,7 @@ class EquipmentType(models.Model):
         ("Total Station", "Total Station"),
         ("Level", "Level"),
         ("Drones", "Drones"),
-        ("EcoSounder", "EcoSounder"),
+        ("EchoSounder", "EchoSounder"),
         ("Laser Scanner", "Laser Scanner"),
         ("Other", "Other"),
     ]
@@ -528,26 +534,44 @@ class Sale(models.Model):
         return f"{self.name} - {self.invoice_number}"
 
     def save(self, *args, **kwargs):
-        """Auto-generate invoice number on creation."""
+        """Auto-generate invoice or receipt number on creation."""
         if not self.invoice_number:
             year = timezone.now().year
-            # Get the highest existing invoice number for this year
-            last = (
-                Sale.objects
-                .filter(invoice_number__startswith=f"{year}/INV/")
-                .order_by("-invoice_number")
-                .first()
-            )
-            if last and last.invoice_number:
-                try:
-                    last_seq = int(last.invoice_number.split("/")[-1])
-                except (ValueError, IndexError):
-                    last_seq = 0
-            else:
-                last_seq = 0
 
-            next_seq = last_seq + 1
-            self.invoice_number = f"{year}/INV/{str(next_seq).zfill(5)}"
+            if self.payment_status == 'completed':
+                # Completed at point of sale — generate receipt number, never invoice
+                last = (
+                    Sale.objects
+                    .filter(invoice_number__startswith=f"{year}/RCP/")
+                    .order_by("-invoice_number")
+                    .first()
+                )
+                if last and last.invoice_number:
+                    try:
+                        last_seq = int(last.invoice_number.split("/")[-1])
+                    except (ValueError, IndexError):
+                        last_seq = 0
+                else:
+                    last_seq = 0
+                next_seq = last_seq + 1
+                self.invoice_number = f"{year}/RCP/{str(next_seq).zfill(5)}"
+            else:
+                # Ongoing, pending, overdue — generate invoice number
+                last = (
+                    Sale.objects
+                    .filter(invoice_number__startswith=f"{year}/INV/")
+                    .order_by("-invoice_number")
+                    .first()
+                )
+                if last and last.invoice_number:
+                    try:
+                        last_seq = int(last.invoice_number.split("/")[-1])
+                    except (ValueError, IndexError):
+                        last_seq = 0
+                else:
+                    last_seq = 0
+                next_seq = last_seq + 1
+                self.invoice_number = f"{year}/INV/{str(next_seq).zfill(5)}"
 
         # Ensure installment fields are cleared when payment plan is "No"
         if self.payment_plan == "No":
@@ -736,7 +760,7 @@ class Payment(models.Model):
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     payment_method = models.CharField(max_length=20, choices=PAYMENT_METHODS, default="paystack")
     payment_reference = models.CharField(max_length=100, blank=True, null=True)
-    payment_date = models.DateTimeField(auto_now_add=True)
+    payment_date = models.DateField(default=timezone.now, blank=True, null=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
 
     def __str__(self):
