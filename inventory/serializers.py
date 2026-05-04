@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from .models import CodeAssignmentLog, Tool, EquipmentType, Payment, Sale, Customer, Supplier, SaleItem, CodeBatch, ActivationCode, Quotation, QuotationItem, DisplayStaff
+from .models import CodeAssignmentLog, Invoice, Tool, EquipmentType, Payment, Sale, Customer, Supplier, SaleItem, CodeBatch, ActivationCode, Quotation, QuotationItem, DisplayStaff
 from django.utils import timezone
 from datetime import timedelta
 import json
@@ -85,7 +85,7 @@ class ToolSerializer(serializers.ModelSerializer):
 class EquipmentTypeSerializer(serializers.ModelSerializer):
     class Meta:
         model = EquipmentType  
-        fields = ["id", "name", "default_cost", "naira_cost", "exchange_rate", "category", "description", "invoice_number", "created_at"]
+        fields = ["id", "name", "default_cost", "naira_cost", "exchange_rate", "category", "description", "invoice_number", "created_at", "expiry_date"]
 
 
 class SupplierSerializer(serializers.ModelSerializer):
@@ -176,7 +176,7 @@ class SaleSerializer(serializers.ModelSerializer):
             'payment_months', "due_date", "payment_status", "import_invoice",
             "is_overdue",
         ]
-        read_only_fields = ["staff_name", "sold_by", "date_sold", "invoice_number"]
+        read_only_fields = ["staff_name", "sold_by", "date_sold"]
 
     def get_payment_status(self, obj):
         db_status = (obj.payment_status or "ongoing").lower()
@@ -261,6 +261,11 @@ class SaleSerializer(serializers.ModelSerializer):
                 SaleItem.objects.create(sale=instance, **item_data)
                 
         return instance
+
+class InvoiceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = Invoice
+        fields = ['id', 'invoice_number', 'exchange_rate', 'expiry_date', 'created_at']
     
 class QuotationItemSerializer(serializers.ModelSerializer):
     class Meta:
@@ -280,15 +285,19 @@ class QuotationSerializer(serializers.ModelSerializer):
             'initial_deposit', 'payment_months', 'notes',
             'date_created', 'valid_until', 'is_converted',
             'converted_sale_id', 'items',
-            'bank_name', 'account_name', 'account_number', 'tin_number', 'footer_note',
+            'bank_name', 'account_name', 'account_number', 'tin_number', 'footer_note', 'document_type',
         ]
         read_only_fields = ['id', 'quote_number', 'date_created']
 
     def create(self, validated_data):
         items_data = validated_data.pop('items', [])
+        # Ensure document_type has a valid default
+        if 'document_type' not in validated_data or not validated_data['document_type']:
+            validated_data['document_type'] = 'quotation'
         quotation = Quotation.objects.create(**validated_data)
+        quotation.refresh_from_db()  # ensure pk is loaded after save
         for item in items_data:
-            QuotationItem.objects.create(quotation=quotation, **item)
+            QuotationItem.objects.create(quotation_id=quotation.pk, **item)
         return quotation
 
     def update(self, instance, validated_data):

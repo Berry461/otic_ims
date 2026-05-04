@@ -3,9 +3,9 @@ from decimal import Decimal
 from django.db import models, transaction
 from rest_framework import generics, permissions, status
 from django.contrib.auth import get_user_model
-from .models import Tool, Payment, Sale, Customer, EquipmentType, Supplier, SaleItem, CodeBatch, ActivationCode, CodeAssignmentLog, BatchSerial, Quotation, DisplayStaff
+from .models import Invoice, Tool, Payment, Sale, Customer, EquipmentType, Supplier, SaleItem, CodeBatch, ActivationCode, CodeAssignmentLog, BatchSerial, Quotation, DisplayStaff
 from .serializers import (
-    UserSerializer, ToolSerializer, EquipmentTypeSerializer,
+    InvoiceSerializer, UserSerializer, ToolSerializer, EquipmentTypeSerializer,
     PaymentSerializer, SaleSerializer, CustomerSerializer, SupplierSerializer, CustomerOwingSerializer,
     CodeBatchSerializer, ActivationCodeSerializer, CodeAssignmentLogSerializer, QuotationSerializer, DisplayStaffSerializer
 )
@@ -119,13 +119,40 @@ class StaffSalesView(APIView):
                 {"detail": "Staff name query param is required."},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        # Sale.staff is stored as a plain name string for BOTH
-        # registered users and hardcoded staff — so iexact works for both.
+
         sales = Sale.objects.filter(
             staff__iexact=staff_name
+        ).exclude(
+            payment_status='pending'
         ).prefetch_related('items').order_by("-date_sold")
-        serializer = SaleSerializer(sales, many=True, context={"request": request})
-        return Response(serializer.data)
+
+        # Summary stats across ALL records before pagination
+        from django.db.models import Sum, Count
+        summary = sales.aggregate(
+            total_revenue=Sum('total_cost'),
+            total_count=Count('id'),
+            completed_count=Count('id', filter=Q(payment_status__in=['completed', 'paid', 'fully-paid'])),
+            overdue_count=Count('id', filter=Q(payment_status='overdue')),
+        )
+
+        # Pagination
+        page_size = int(request.query_params.get('page_size', 10))
+        page = int(request.query_params.get('page', 1))
+        start = (page - 1) * page_size
+        end = start + page_size
+        paginated = sales[start:end]
+
+        serializer = SaleSerializer(paginated, many=True, context={"request": request})
+        return Response({
+            "count": sales.count(),
+            "results": serializer.data,
+            "summary": {
+                "total_revenue": float(summary['total_revenue'] or 0),
+                "total_count": summary['total_count'] or 0,
+                "completed_count": summary['completed_count'] or 0,
+                "overdue_count": summary['overdue_count'] or 0,
+            }
+        })
 
 class DisplayStaffListCreateView(generics.ListCreateAPIView):
     serializer_class = DisplayStaffSerializer
@@ -240,23 +267,41 @@ class CustomerListView(generics.ListAPIView):
     search_fields = ['name', 'email', 'phone']
 
     def get_queryset(self):
-        from django.db.models import Sum, FloatField, OuterRef, Subquery
+        from django.db.models import Sum, FloatField, Subquery, OuterRef, Value
         from django.db.models.functions import Coalesce
+        from decimal import Decimal
 
         sort_by = self.request.query_params.get('sort_by', '')
 
-        # Subquery: sum total_cost of all non-draft sales matching this customer's phone
-        sales_total = Sale.objects.filter(
-            phone=OuterRef('phone'),
-            payment_status__in=['completed', 'ongoing', 'overdue']
-        ).values('phone').annotate(
-            total=Sum('total_cost')
-        ).values('total')
+        # Calculate lifetime value as:
+        # sum of initial_deposit across all sales + sum of all logged payments
+        # This captures overdraft payments without touching amount_left
+        deposit_subquery = Subquery(
+            Sale.objects.filter(
+                phone=OuterRef('phone'),
+            ).exclude(
+                payment_status='pending'
+            ).values('phone').annotate(
+                total=Sum('initial_deposit')
+            ).values('total')[:1],
+            output_field=FloatField()
+        )
+
+        logged_subquery = Subquery(
+            Payment.objects.filter(
+                sale__phone=OuterRef('phone'),
+            ).values('sale__phone').annotate(
+                total=Sum('amount')
+            ).values('total')[:1],
+            output_field=FloatField()
+        )
 
         queryset = Customer.objects.annotate(
-            lifetime_value=Coalesce(
-                Subquery(sales_total, output_field=FloatField()),
-                0.0,
+            deposit_total=Coalesce(deposit_subquery, 0.0, output_field=FloatField()),
+            logged_total=Coalesce(logged_subquery, 0.0, output_field=FloatField()),
+        ).annotate(
+            lifetime_value=models.ExpressionWrapper(
+                models.F('deposit_total') + models.F('logged_total'),
                 output_field=FloatField()
             )
         )
@@ -860,6 +905,10 @@ class EquipmentTypeListView(generics.ListCreateAPIView):
     serializer_class = EquipmentTypeSerializer
     permission_classes = [permissions.AllowAny]
 
+    def create(self, request, *args, **kwargs):
+        print("INCOMING DATA:", request.data)  # ← ADD THIS
+        return super().create(request, *args, **kwargs)
+
     def get_queryset(self):
         queryset = EquipmentType.objects.all().order_by("category", "name")
         
@@ -900,6 +949,16 @@ def equipment_by_invoice(request):
         .order_by('-last_updated')
     
     return Response(list(invoices))
+
+class InvoiceListView(generics.ListCreateAPIView):
+    queryset           = Invoice.objects.all().order_by('-created_at')
+    serializer_class   = InvoiceSerializer
+    permission_classes = [permissions.AllowAny]
+
+class InvoiceDetailView(generics.RetrieveUpdateDestroyAPIView):
+    queryset           = Invoice.objects.all()
+    serializer_class   = InvoiceSerializer
+    permission_classes = [permissions.AllowAny]
 
 #-------------------
 # SUPPLIERS
@@ -1249,14 +1308,24 @@ class QuotationListCreateView(generics.ListCreateAPIView):
     pagination_class = StandardResultsSetPagination
 
     def get_queryset(self):
-        qs = Quotation.objects.all()
+        qs = Quotation.objects.all().order_by('-id')
         search = self.request.query_params.get('search', '').strip()
+        document_type = self.request.query_params.get('document_type', '').strip()
+        is_converted = self.request.query_params.get('is_converted', '').strip()
+
         if search:
             qs = qs.filter(
                 Q(name__icontains=search) |
                 Q(quote_number__icontains=search) |
                 Q(phone__icontains=search)
             )
+        if document_type:
+            qs = qs.filter(document_type=document_type)
+        if is_converted == 'false':
+            qs = qs.filter(is_converted=False)
+        elif is_converted == 'true':
+            qs = qs.filter(is_converted=True)
+
         return qs
 
 
@@ -1345,6 +1414,23 @@ class QuotationConvertView(APIView):
             "message": f"Quotation {quotation.quote_number} converted to sale {sale.invoice_number}.",
         }, status=status.HTTP_201_CREATED)
 
+
+class QuotationMarkConvertedView(APIView):
+    """
+    POST /api/quotations/<pk>/mark-converted/
+    Simply marks as converted without creating a sale.
+    Used when sale is already created via Sales dialog.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        try:
+            quotation = Quotation.objects.get(pk=pk)
+            quotation.is_converted = True
+            quotation.save(update_fields=['is_converted'])
+            return Response({"success": True})
+        except Quotation.DoesNotExist:
+            return Response({"error": "Not found."}, status=404)
 
 class QuotationSendEmailView(APIView):
     """

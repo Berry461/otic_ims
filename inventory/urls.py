@@ -1,6 +1,6 @@
 from django.urls import path
 from .views import (
-    DisplayStaffDetailView, DisplayStaffListCreateView, EmailLoginView, AddStaffView, MonthlyRevenueView, PaymentSummaryView, QuotationSendEmailView, SaveReceiverCodeView, StaffListView,ReceiverCodeManagementView,
+    DisplayStaffDetailView, DisplayStaffListCreateView, EmailLoginView, AddStaffView, InvoiceDetailView, InvoiceListView, MonthlyRevenueView, PaymentSummaryView, QuotationSendEmailView, SaveReceiverCodeView, StaffListView,ReceiverCodeManagementView,
     ToolListCreateView, ToolDetailView, EquipmentTypeListView, EquipmentTypeDetailView,
     SaleListCreateView, SaleDetailView,CodeBatchListCreateView,CodeBatchItemsView,PublicCodeSearchView,
     PaymentListCreateView, PaymentDetailView,CodeBatchUploadCSVView,CodeBatchDownloadCSVView,
@@ -8,7 +8,7 @@ from .views import (
     SupplierListView, SupplierDetailView, equipment_by_invoice,
     ToolGetRandomSerialView, ToolSoldSerialsView,  ToolGroupedListView, ToolAssignRandomFromGroupView, CustomerOwingDataView, ImportCodesView,
     AssignCodeView, CustomerCodesView, GenerateEmergencyCodeView, AvailableCodesView, ReceiversNeedingCodesView,
-    SendBulkExpirationEmailsView,StaffSalesView,SyncCustomerFinancialsView,QuotationListCreateView, QuotationDetailView, QuotationConvertView
+    SendBulkExpirationEmailsView,StaffSalesView,SyncCustomerFinancialsView,QuotationListCreateView, QuotationDetailView, QuotationConvertView, QuotationMarkConvertedView
 )
 urlpatterns = [
     # --- Auth ---
@@ -83,5 +83,10 @@ urlpatterns = [
     path('quotations/', QuotationListCreateView.as_view(), name='quotation-list'),
     path('quotations/<int:pk>/', QuotationDetailView.as_view(), name='quotation-detail'),
     path('quotations/<int:pk>/convert/', QuotationConvertView.as_view(), name='quotation-convert'),
+    path('quotations/<int:pk>/mark-converted/', QuotationMarkConvertedView.as_view(), name='quotation-mark-converted'),
     path('quotations/<int:pk>/send-email/', QuotationSendEmailView.as_view(), name='quotation-send-email'),
+
+    # Invoices
+    path('invoices/', InvoiceListView.as_view(), name='invoice-list'),
+    path('invoices/<int:pk>/', InvoiceDetailView.as_view(), name='invoice-detail'),
 ]

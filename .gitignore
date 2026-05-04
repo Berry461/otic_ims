@@ -9,3 +9,7 @@ id_new_project
 id_new_project.pub
 fix_indent.py
 test.xlsl
+docker-compose.yml
+docker-compose.prod.yml
+Dockerfile
+*.log

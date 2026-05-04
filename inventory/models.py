@@ -438,6 +438,7 @@ class EquipmentType(models.Model):
     category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, default="Receiver")
     description = models.TextField(blank=True, null=True)
     invoice_number = models.CharField(max_length=100, blank=True, null=True)  # NEW FIELD
+    expiry_date = models.DateField(blank=True, null=True, verbose_name="Import Expiry Date")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -449,6 +450,15 @@ class EquipmentType(models.Model):
             models.Index(fields=['invoice_number']),
             models.Index(fields=['category']),
         ]
+
+class Invoice(models.Model):
+    invoice_number = models.CharField(max_length=100, unique=True)
+    exchange_rate  = models.DecimalField(max_digits=10, decimal_places=4, blank=True, null=True)
+    expiry_date    = models.DateField(blank=True, null=True)
+    created_at     = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.invoice_number
     
 #----------------------------
 # SUPPLIERS 
@@ -534,46 +544,40 @@ class Sale(models.Model):
         return f"{self.name} - {self.invoice_number}"
 
     def save(self, *args, **kwargs):
-        """Auto-generate invoice or receipt number on creation."""
         if not self.invoice_number:
+            from inventory.models import Quotation
             year = timezone.now().year
+            prefix = f"{year}/INV/"
 
-            if self.payment_status == 'completed':
-                # Completed at point of sale — generate receipt number, never invoice
-                last = (
-                    Sale.objects
-                    .filter(invoice_number__startswith=f"{year}/RCP/")
-                    .order_by("-invoice_number")
-                    .first()
-                )
-                if last and last.invoice_number:
-                    try:
-                        last_seq = int(last.invoice_number.split("/")[-1])
-                    except (ValueError, IndexError):
-                        last_seq = 0
-                else:
-                    last_seq = 0
-                next_seq = last_seq + 1
-                self.invoice_number = f"{year}/RCP/{str(next_seq).zfill(5)}"
+            used_sale_nums = set(
+                Sale.objects.filter(invoice_number__startswith=prefix)
+                .values_list("invoice_number", flat=True)
+            )
+            used_quote_nums = set(
+                Quotation.objects.filter(quote_number__startswith=prefix)
+                .values_list("quote_number", flat=True)
+            )
+            used_all = used_sale_nums | used_quote_nums
+
+            used_seqs = set()
+            for num in used_all:
+                try:
+                    used_seqs.add(int(num.split("/")[-1]))
+                except (ValueError, IndexError):
+                    pass
+
+            if used_seqs:
+                max_seq = max(used_seqs)
+                next_seq = None
+                for i in range(1, max_seq + 2):
+                    if i not in used_seqs:
+                        next_seq = i
+                        break
             else:
-                # Ongoing, pending, overdue — generate invoice number
-                last = (
-                    Sale.objects
-                    .filter(invoice_number__startswith=f"{year}/INV/")
-                    .order_by("-invoice_number")
-                    .first()
-                )
-                if last and last.invoice_number:
-                    try:
-                        last_seq = int(last.invoice_number.split("/")[-1])
-                    except (ValueError, IndexError):
-                        last_seq = 0
-                else:
-                    last_seq = 0
-                next_seq = last_seq + 1
-                self.invoice_number = f"{year}/INV/{str(next_seq).zfill(5)}"
+                next_seq = 1
 
-        # Ensure installment fields are cleared when payment plan is "No"
+            self.invoice_number = f"{prefix}{str(next_seq).zfill(5)}"
+
         if self.payment_plan == "No":
             self.initial_deposit = None
             self.payment_months = None
@@ -703,6 +707,8 @@ class QuotationItem(models.Model):
 
 
 class Quotation(models.Model):
+    DOCUMENT_TYPES = [('quotation', 'Quotation'), ('invoice', 'Invoice')]
+    document_type = models.CharField(max_length=20, choices=DOCUMENT_TYPES, default='quotation')
     quote_number = models.CharField(max_length=100, unique=True, blank=True)
     name = models.CharField(max_length=255)
     phone = models.CharField(max_length=20, blank=True, null=True)
@@ -735,8 +741,45 @@ class Quotation(models.Model):
 
     def save(self, *args, **kwargs):
         if not self.quote_number:
-            import random, string
-            self.quote_number = f"QUO-{''.join(random.choices(string.ascii_uppercase + string.digits, k=6))}"
+            if self.document_type == 'invoice':
+                from .models import Sale
+                year = timezone.now().year
+                prefix = f"{year}/INV/"
+
+                # Get all used invoice numbers from both Sales and Quotations
+                used_sale_nums = set(
+                    Sale.objects.filter(invoice_number__startswith=prefix)
+                    .values_list("invoice_number", flat=True)
+                )
+                used_quote_nums = set(
+                    Quotation.objects.filter(quote_number__startswith=prefix)
+                    .values_list("quote_number", flat=True)
+                )
+                used_all = used_sale_nums | used_quote_nums
+
+                # Extract sequence numbers
+                used_seqs = set()
+                for num in used_all:
+                    try:
+                        used_seqs.add(int(num.split("/")[-1]))
+                    except (ValueError, IndexError):
+                        pass
+
+                # Find the lowest available gap, or increment from max
+                if used_seqs:
+                    max_seq = max(used_seqs)
+                    # Look for gaps first
+                    next_seq = None
+                    for i in range(1, max_seq + 2):
+                        if i not in used_seqs:
+                            next_seq = i
+                            break
+                else:
+                    next_seq = 1
+
+                self.quote_number = f"{prefix}{str(next_seq).zfill(5)}"
+            else:
+                self.quote_number = f"QUO-{''.join(random.choices(string.ascii_uppercase + string.digits, k=6))}"
         super().save(*args, **kwargs)
 
 
@@ -954,19 +997,7 @@ def sync_single_customer(customer):
         Customer.objects.filter(pk=customer.pk).update(status='fully-paid')
 
 
-# Listen for any saved or deleted Payment
-# Payment signal disabled - sync handled explicitly in perform_create
-# to avoid race condition where signal fires before sale status updates.
-# @receiver([post_save, post_delete], sender=Payment)
-# def trigger_customer_sync_on_payment(sender, instance, **kwargs):
-#     if instance.sale:
-#         customer = Customer.objects.filter(phone=instance.sale.phone).first()
-#         if customer:
-#             sync_single_customer(customer)
 
-# Sale signal disabled - sync handled explicitly in perform_create
-# @receiver([post_save, post_delete], sender=Sale)
-# def trigger_customer_sync_on_sale(sender, instance, **kwargs):
-#     customer = Customer.objects.filter(phone=instance.phone).first()
-#     if customer:
-#         sync_single_customer(customer)
+    
+
+
