@@ -3,7 +3,7 @@ from decimal import Decimal
 from django.db import models, transaction
 from rest_framework import generics, permissions, status
 from django.contrib.auth import get_user_model
-from .models import Invoice, Tool, Payment, Sale, Customer, EquipmentType, Supplier, SaleItem, CodeBatch, ActivationCode, CodeAssignmentLog, BatchSerial, Quotation, DisplayStaff
+from .models import InventoryFlag, Invoice, Tool, Payment, Sale, Customer, EquipmentType, Supplier, SaleItem, CodeBatch, ActivationCode, CodeAssignmentLog, BatchSerial, Quotation, DisplayStaff
 from .serializers import (
     InvoiceSerializer, UserSerializer, ToolSerializer, EquipmentTypeSerializer,
     PaymentSerializer, SaleSerializer, CustomerSerializer, SupplierSerializer, CustomerOwingSerializer,
@@ -44,6 +44,85 @@ from decimal import Decimal
 
 User = get_user_model()
 
+
+def build_account_email_html(name, email, password, role="customer", login_url="https://oticgs.com/inventory/"):
+    role_label = "Customer" if role == "customer" else "Staff"
+    brand_blue = "#0033A0"
+    return f"""<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+<body style="margin:0;padding:0;background:#f4f7fb;font-family:Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f7fb;padding:40px 0;">
+<tr><td align="center">
+<table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+<tr><td style="background:{brand_blue};padding:36px 40px;text-align:center;">
+<h1 style="margin:0;color:#ffffff;font-size:28px;font-weight:800;letter-spacing:1px;">OTIC GEOSYSTEMS</h1>
+<p style="margin:6px 0 0;color:#b3c6f7;font-size:13px;letter-spacing:2px;text-transform:uppercase;">Professional Surveying Equipment</p>
+</td></tr>
+<tr><td style="background:#e8f0fe;padding:24px 40px;border-bottom:3px solid {brand_blue};">
+<h2 style="margin:0;color:{brand_blue};font-size:20px;">Welcome, {name or role_label}!</h2>
+<p style="margin:8px 0 0;color:#444;font-size:14px;">Your {role_label} account has been successfully created.</p>
+</td></tr>
+<tr><td style="padding:32px 40px;">
+<p style="margin:0 0 20px;color:#333;font-size:15px;">Here are your login credentials. Please keep them safe.</p>
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f8f9ff;border:1px solid #dce4f7;border-radius:8px;overflow:hidden;">
+<tr><td style="padding:16px 20px;border-bottom:1px solid #dce4f7;">
+<p style="margin:0;color:#888;font-size:11px;text-transform:uppercase;letter-spacing:1px;font-weight:bold;">Email Address</p>
+<p style="margin:4px 0 0;color:#0033A0;font-size:15px;font-weight:600;">{email}</p>
+</td></tr>
+<tr><td style="padding:16px 20px;">
+<p style="margin:0;color:#888;font-size:11px;text-transform:uppercase;letter-spacing:1px;font-weight:bold;">Temporary Password</p>
+<p style="margin:4px 0 0;color:#333;font-size:18px;font-weight:700;font-family:monospace;letter-spacing:2px;background:#fff;padding:8px 12px;border-radius:4px;border:1px dashed #0033A0;display:inline-block;">{password}</p>
+</td></tr></table>
+<p style="margin:20px 0;color:#e53e3e;font-size:13px;background:#fff5f5;padding:12px 16px;border-radius:6px;border-left:4px solid #e53e3e;">Please change your password after your first login for security.</p>
+<table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:12px 0 24px;">
+<a href="{login_url}" style="display:inline-block;background:{brand_blue};color:#ffffff;text-decoration:none;padding:14px 40px;border-radius:8px;font-size:15px;font-weight:700;letter-spacing:0.5px;">Login to Your Account</a>
+</td></tr></table>
+<p style="margin:0;color:#666;font-size:13px;line-height:1.6;">Questions? Contact us at <a href="mailto:oticgs@gmail.com" style="color:#0033A0;">oticgs@gmail.com</a></p>
+</td></tr>
+<tr><td style="background:#f8f9ff;padding:20px 40px;border-top:1px solid #dce4f7;text-align:center;">
+<p style="margin:0;color:#999;font-size:12px;">OTIC GEOSYSTEMS LTD | 3, Bello Close, Chevyview Estate, Chevron Drive, Lekki-Epe Expressway, Lagos, Nigeria</p>
+<p style="margin:6px 0 0;color:#999;font-size:11px;">TIN: 31413107-0001</p>
+</td></tr>
+</table></td></tr></table>
+</body></html>"""
+
+
+class EmailLoginView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        email = request.data.get("email")
+        password = request.data.get("password")
+
+        if not email or not password:
+            return Response({"detail": "Email and password are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        User = get_user_model()
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            return Response({"detail": "Invalid credentials."}, status=status.HTTP_401_UNAUTHORIZED)
+
+        if not user.check_password(password):
+            return Response({"detail": "Invalid credentials."}, status=status.HTTP_401_UNAUTHORIZED)
+
+        if not user.is_active:
+            return Response({"detail": "Account is disabled."}, status=status.HTTP_403_FORBIDDEN)
+
+        refresh = RefreshToken.for_user(user)
+        return Response({
+            "access": str(refresh.access_token),
+            "refresh": str(refresh),
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "name": getattr(user, "name", "") or "",
+                "role": getattr(user, "role", "staff") or "staff",
+                "phone": getattr(user, "phone", "") or "",
+            }
+        })
+
+
 class StandardResultsSetPagination(PageNumberPagination):
     page_size = 10
     page_size_query_param = 'page_size'
@@ -61,31 +140,27 @@ class AddStaffView(generics.CreateAPIView):
         name = request.data.get("name")
         phone = request.data.get("phone")
 
-        if not email:
-            return Response({"detail": "Email is required."}, status=status.HTTP_400_BAD_REQUEST)
-
-        if User.objects.filter(email=email).exists():
+        if email and User.objects.filter(email=email).exists():
             return Response({"detail": "User with this email already exists."}, status=status.HTTP_400_BAD_REQUEST)
 
         password = secrets.token_urlsafe(10)
 
         user = User.objects.create_user(
-            email=email,
+            email=email or f"noemail_{secrets.token_urlsafe(6)}@placeholder.local",
             password=password,
             name=name or "",
             phone=phone or "",
             role="staff",
             is_active=True,
         )
-
         try:
-            send_mail(
-                subject="Your Staff Account Details",
-                message=f"Hello {name or 'Staff'},\n\nYour account has been created.\n\nEmail: {email}\nPassword: {password}",
-                from_email=getattr(settings, "DEFAULT_FROM_EMAIL", "runocole@gmail.com"),
-                recipient_list=[email],
-                fail_silently=False,
-            )
+            from django.core.mail import EmailMultiAlternatives
+            subject = "Your OTIC Geosystems Staff Account"
+            text_content = "Hello " + str(name or "Staff") + ",\n\nYour account has been created.\n\nEmail: " + str(email) + "\nPassword: " + str(password) + "\n\nLogin at: https://oticgs.com/inventory/"
+            html_content = build_account_email_html(name, email, password, role="staff")
+            msg = EmailMultiAlternatives(subject, text_content, getattr(settings, "DEFAULT_FROM_EMAIL", "runocole@gmail.com"), [email])
+            msg.attach_alternative(html_content, "text/html")
+            msg.send(fail_silently=False)
         except Exception:
             traceback.print_exc()
 
@@ -222,15 +297,13 @@ class AddCustomerView(generics.CreateAPIView):
         phone = request.data.get("phone")
         state = request.data.get("state")
 
-        if not email:
-            return Response({"detail": "Email is required."}, status=status.HTTP_400_BAD_REQUEST)
-
-        if User.objects.filter(email=email).exists():
+        if email and User.objects.filter(email=email).exists():
             return Response({"detail": "User with this email already exists."}, status=status.HTTP_400_BAD_REQUEST)
 
         password = secrets.token_urlsafe(10)
+        placeholder_email = email if email else ("noemail_" + secrets.token_urlsafe(6) + "@placeholder.local")
         user = User.objects.create_user(
-            email=email,
+            email=placeholder_email,
             password=password,
             name=name or "",
             phone=phone or "",
@@ -239,17 +312,17 @@ class AddCustomerView(generics.CreateAPIView):
         )
 
         Customer.objects.create(
-            user=user, name=name, phone=phone, state=state, email=email
+            user=user, name=name, phone=phone, state=state, email=email or ""
         )
 
         try:
-            send_mail(
-                subject="Your Customer Account Details",
-                message=f"Hello {name or 'Customer'},\n\nAn account has been created for you.\nEmail: {email}\nPassword: {password}",
-                from_email=getattr(settings, "DEFAULT_FROM_EMAIL", "runocole@gmail.com"),
-                recipient_list=[email],
-                fail_silently=True,
-            )
+            from django.core.mail import EmailMultiAlternatives
+            subject = "Welcome to OTIC Geosystems - Your Account Details"
+            text_content = f"Hello {name or 'Customer'},\n\nYour account has been created.\n\nEmail: {email}\nPassword: {password}\n\nLogin at: https://oticgs.com/inventory/"
+            html_content = build_account_email_html(name, email, password, role="customer")
+            msg = EmailMultiAlternatives(subject, text_content, getattr(settings, "DEFAULT_FROM_EMAIL", "runocole@gmail.com"), [email])
+            msg.attach_alternative(html_content, "text/html")
+            msg.send(fail_silently=True)
         except Exception as e:
             print("Failed to send email:", e)
 
@@ -738,7 +811,7 @@ class ToolAssignRandomFromGroupView(APIView):
             ))
 
             # ✅ HANDLE ACCESSORIES
-            if category == "Accessory":
+            if category in ("Accessory", "Other", "Others"):
                 if not items:
                     return Response({"error": f"No {tool_name} available."}, status=404)
                 
@@ -763,7 +836,22 @@ class ToolAssignRandomFromGroupView(APIView):
                         "external_radio_serial": None
                     })
                 else:
-                    return Response({"error": f"{tool_name} has no serials."}, status=404)
+                    # No serial — deduct stock directly and proceed with no serial
+                    selected_tool.stock -= 1
+                    selected_tool.save()
+                    return Response({
+                        "assigned_tool_id": selected_tool.id,
+                        "tool_name": selected_tool.name,
+                        "serial_set": [],
+                        "serial_count": 0,
+                        "set_type": "Accessory",
+                        "cost": str(selected_tool.cost),
+                        "description": selected_tool.description or "Accessory",
+                        "remaining_stock": selected_tool.stock,
+                        "import_invoice": selected_tool.invoice_number,
+                        "datalogger_serial": None,
+                        "external_radio_serial": None
+                    })
 
             # ✅ HANDLE RECEIVERS (Base, Rover, Combo)
             wants_combo = "combo" in requested_type or "base & rover" in requested_type
@@ -906,7 +994,6 @@ class EquipmentTypeListView(generics.ListCreateAPIView):
     permission_classes = [permissions.AllowAny]
 
     def create(self, request, *args, **kwargs):
-        print("INCOMING DATA:", request.data)  # ← ADD THIS
         return super().create(request, *args, **kwargs)
 
     def get_queryset(self):
@@ -1474,9 +1561,9 @@ Total: NGN {quotation.total_cost:,.2f}
 
 {quotation.notes or ''}
 
-Bank: Zenith Bank
+Bank: PROVIDUS Bank
 Account Name: OTIC GEOSYSTEMS LTD
-Account NO: 1015175251
+Account NO: 1309010165
 
 Thank you for your interest.
 
@@ -1510,7 +1597,7 @@ class DashboardSummaryView(APIView):
         total_revenue = Sale.objects.exclude(payment_status='pending').aggregate(total=Sum("total_cost"))["total"] or 0
         tools_count = Tool.objects.filter(stock__gt=0).count()
         staff_count = User.objects.filter(role="staff").count()
-        active_customers = Sale.objects.exclude(payment_status='pending').filter(payment_plan="Yes").values('phone').distinct().count()
+        active_customers = Sale.objects.filter(payment_status='ongoing').values('phone').distinct().count()
 
         today = timezone.now()
         month_start = today.replace(day=1)
@@ -1553,9 +1640,11 @@ class DashboardSummaryView(APIView):
         for item in low_stock_items:
             item["stock"] = item.pop("total_stock")
 
-        # Top selling tools
+        # Top selling tools (exclude drafts/pending)
         top_selling_tools = (
-            SaleItem.objects.values("tool__name")
+            SaleItem.objects.filter(sale__payment_status__isnull=False)
+            .exclude(sale__payment_status__iexact="pending")
+            .values("tool__name")
             .annotate(total_sold=Count("id"))
             .order_by("-total_sold")[:5]
         )
@@ -1578,13 +1667,13 @@ class DashboardSummaryView(APIView):
             })
 
         # Expiring receivers - only show items with stock
-        thirty_days_from_now = timezone.now() + timedelta(days=30)
+        fifteen_days_from_now = timezone.now() + timedelta(days=15)
         expiring_codes = (
             ActivationCode.objects
             .filter(
                 expiry_date__isnull=False,
                 expiry_date__gt=timezone.now(),
-                expiry_date__lte=thirty_days_from_now,
+                expiry_date__lte=fifteen_days_from_now,
                 status__in=["assigned", "activated"]
             )
             .order_by("expiry_date")[:10]
@@ -2681,6 +2770,8 @@ class CodeBatchItemsView(APIView):
                 "code_expiry":    expiry_display,
                 "duration": f"{(code_obj.expiry_date.date() - timezone.now().date()).days} days" if (code_obj and code_obj.expiry_date) else "unlimited",
                 "qr_code_image": code_obj.qr_code_image if code_obj else "",  # NEW
+                "month":          s.month or "",
+                "year":           s.year or "",
             }
 
             if s.status == "not sold":
@@ -2998,6 +3089,8 @@ class CodeBatchUploadCSVView(APIView):
                             "customer_email": row_customer_email or None,
                             "customer_name":  row_customer_name  or None,
                             "assigned_date":  row_assigned_date,
+                            "month":          str(row.get("month", row.get("Month", "")) or "").strip() or None,
+                            "year":           str(row.get("year", row.get("Year", "")) or "").strip() or None,
                         }
                     )
 
@@ -3036,6 +3129,7 @@ class CodeBatchDownloadCSVView(APIView):
             "serial_number", "current_code", "code_expiry",
             "status", "payment_status",
             "customer_email", "customer_name", "assigned_date",
+            "month", "year",
         ])
 
         for s in serials:
@@ -3053,6 +3147,8 @@ class CodeBatchDownloadCSVView(APIView):
                 s.customer_email or "",
                 s.customer_name  or "",
                 s.assigned_date.strftime("%d/%m/%Y") if s.assigned_date else "",
+                s.month or "",
+                s.year  or "",
             ])
 
         return response
@@ -3196,3 +3292,89 @@ class PublicCodeSearchView(APIView):
             "customer_name":  batch_serial.customer_name,
             "payment_status": status_display,
         }, status=status.HTTP_200_OK)
+
+
+class InventoryFlagViewSet(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        """Admin: list all flags. Staff: list own flags."""
+        if request.user.is_staff or request.user.is_superuser:
+            flags = InventoryFlag.objects.select_related('tool', 'flagged_by', 'resolved_by').all()
+        else:
+            flags = InventoryFlag.objects.select_related('tool', 'flagged_by', 'resolved_by').filter(flagged_by=request.user)
+        
+        status_filter = request.query_params.get('status')
+        if status_filter:
+            flags = flags.filter(status=status_filter)
+        
+        from .serializers import InventoryFlagSerializer
+        serializer = InventoryFlagSerializer(flags, many=True)
+        return Response(serializer.data)
+
+    def post(self, request):
+        """Staff: create a new flag."""
+        from .serializers import InventoryFlagSerializer
+        serializer = InventoryFlagSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save(flagged_by=request.user)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class InventoryFlagDetailView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_object(self, pk):
+        try:
+            return InventoryFlag.objects.get(pk=pk)
+        except InventoryFlag.DoesNotExist:
+            return None
+
+    def patch(self, request, pk):
+        """Admin: resolve or dismiss a flag."""
+        if not (request.user.is_staff or request.user.is_superuser):
+            return Response({"error": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        
+        flag = self.get_object(pk)
+        if not flag:
+            return Response({"error": "Flag not found."}, status=status.HTTP_404_NOT_FOUND)
+        
+        from .serializers import InventoryFlagSerializer
+        from django.utils import timezone
+        
+        new_status = request.data.get('status')
+        if new_status in ['resolved', 'dismissed']:
+            flag.resolved_at = timezone.now()
+            flag.resolved_by = request.user
+        
+        flag.status = request.data.get('status', flag.status)
+        flag.admin_note = request.data.get('admin_note', flag.admin_note)
+        flag.save()
+        
+        serializer = InventoryFlagSerializer(flag)
+        return Response(serializer.data)
+
+    def delete(self, request, pk):
+        """Admin: delete a flag."""
+        if not (request.user.is_staff or request.user.is_superuser):
+            return Response({"error": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        
+        flag = self.get_object(pk)
+        if not flag:
+            return Response({"error": "Flag not found."}, status=status.HTTP_404_NOT_FOUND)
+        
+        flag.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class InventoryFlagCountView(APIView):
+    """Returns count of pending flags for dashboard badge."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        if request.user.is_staff or request.user.is_superuser:
+            count = InventoryFlag.objects.filter(status='pending').count()
+        else:
+            count = InventoryFlag.objects.filter(flagged_by=request.user, status='pending').count()
+        return Response({"pending_flags": count})

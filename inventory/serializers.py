@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from .models import CodeAssignmentLog, Invoice, Tool, EquipmentType, Payment, Sale, Customer, Supplier, SaleItem, CodeBatch, ActivationCode, Quotation, QuotationItem, DisplayStaff
+from .models import InventoryFlag, CodeAssignmentLog, Invoice, Tool, EquipmentType, Payment, Sale, Customer, Supplier, SaleItem, CodeBatch, ActivationCode, Quotation, QuotationItem, DisplayStaff
 from django.utils import timezone
 from datetime import timedelta
 import json
@@ -174,7 +174,7 @@ class SaleSerializer(serializers.ModelSerializer):
             "state", "items", "total_cost", "tax_amount", "date_sold", 
             "invoice_number", "payment_plan", 'initial_deposit', 
             'payment_months', "due_date", "payment_status", "import_invoice",
-            "is_overdue",
+            "is_overdue","currency","exchange_rate", "usd_amount",
         ]
         read_only_fields = ["staff_name", "sold_by", "date_sold"]
 
@@ -285,7 +285,7 @@ class QuotationSerializer(serializers.ModelSerializer):
             'initial_deposit', 'payment_months', 'notes',
             'date_created', 'valid_until', 'is_converted',
             'converted_sale_id', 'items',
-            'bank_name', 'account_name', 'account_number', 'tin_number', 'footer_note', 'document_type',
+            'bank_name', 'account_name', 'account_number', 'tin_number', 'footer_note', 'document_type', 'currency',
         ]
         read_only_fields = ['id', 'quote_number', 'date_created']
 
@@ -448,3 +448,40 @@ class CodeAssignmentLogSerializer(serializers.ModelSerializer):
     class Meta:
         model = CodeAssignmentLog
         fields = '__all__'
+
+
+class InventoryFlagSerializer(serializers.ModelSerializer):
+    flagged_by_name = serializers.SerializerMethodField()
+    resolved_by_name = serializers.SerializerMethodField()
+    tool_name = serializers.SerializerMethodField()
+    tool_code = serializers.SerializerMethodField()
+    tool_category = serializers.SerializerMethodField()
+
+    class Meta:
+        model = InventoryFlag
+        fields = [
+            'id', 'tool', 'tool_name', 'tool_code', 'tool_category',
+            'flagged_by', 'flagged_by_name', 'reason', 'note',
+            'status', 'admin_note', 'created_at', 'resolved_at',
+            'resolved_by', 'resolved_by_name',
+        ]
+        read_only_fields = ['id', 'created_at', 'resolved_at', 'flagged_by']
+
+    def get_flagged_by_name(self, obj):
+        if obj.flagged_by:
+            return getattr(obj.flagged_by, 'name', None) or getattr(obj.flagged_by, 'username', None) or obj.flagged_by.email
+        return "Unknown"
+
+    def get_resolved_by_name(self, obj):
+        if obj.resolved_by:
+            return getattr(obj.resolved_by, 'name', None) or getattr(obj.resolved_by, 'username', None) or obj.resolved_by.email
+        return None
+
+    def get_tool_name(self, obj):
+        return obj.tool.name if obj.tool else ""
+
+    def get_tool_code(self, obj):
+        return obj.tool.code if obj.tool else ""
+
+    def get_tool_category(self, obj):
+        return obj.tool.category if obj.tool else ""

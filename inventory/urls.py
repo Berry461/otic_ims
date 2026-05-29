@@ -8,7 +8,9 @@ from .views import (
     SupplierListView, SupplierDetailView, equipment_by_invoice,
     ToolGetRandomSerialView, ToolSoldSerialsView,  ToolGroupedListView, ToolAssignRandomFromGroupView, CustomerOwingDataView, ImportCodesView,
     AssignCodeView, CustomerCodesView, GenerateEmergencyCodeView, AvailableCodesView, ReceiversNeedingCodesView,
-    SendBulkExpirationEmailsView,StaffSalesView,SyncCustomerFinancialsView,QuotationListCreateView, QuotationDetailView, QuotationConvertView, QuotationMarkConvertedView
+    SendBulkExpirationEmailsView,StaffSalesView,SyncCustomerFinancialsView,QuotationListCreateView, QuotationDetailView, QuotationConvertView, QuotationMarkConvertedView,
+    InventoryFlagViewSet, InventoryFlagDetailView, InventoryFlagCountView,
+    ToolRestoreSerialsView
 )
 urlpatterns = [
     # --- Auth ---
@@ -89,4 +91,10 @@ urlpatterns = [
     # Invoices
     path('invoices/', InvoiceListView.as_view(), name='invoice-list'),
     path('invoices/<int:pk>/', InvoiceDetailView.as_view(), name='invoice-detail'),
+
+    path('inventory-flags/', InventoryFlagViewSet.as_view(), name='inventory-flags'),
+    path('inventory-flags/count/', InventoryFlagCountView.as_view(), name='inventory-flag-count'),
+    path('tools/restore-serials/', ToolRestoreSerialsView.as_view(), name='tool-restore-serials'),
+    path('inventory-flags/<int:pk>/', InventoryFlagDetailView.as_view(), name='inventory-flag-detail'),
+
 ]

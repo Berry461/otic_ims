@@ -370,11 +370,14 @@ class Tool(models.Model):
         # Remove from pending list
         self.pending_serials = [p for p in self.pending_serials if p.get('serial_set') != serial_set]
         
-        # Put back in available
-        self.available_serials.extend(serial_set)
+        # Only add serials not already in available_serials
+        existing = set(self.available_serials or [])
+        new_serials = [s for s in serial_set if s not in existing]
+        self.available_serials.extend(new_serials)
         
-        # Restore stock count
-        self.stock += 1
+        # Only increment stock if we actually restored new serials
+        if new_serials:
+            self.stock += 1
         
         self.save(update_fields=["available_serials", "pending_serials", "stock"])
 
@@ -434,7 +437,8 @@ class EquipmentType(models.Model):
     name = models.CharField(max_length=100)
     default_cost = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     naira_cost = models.DecimalField(max_digits=15, decimal_places=2, blank=True, null=True)
-    exchange_rate = models.DecimalField(max_digits=10, decimal_places=4, blank=True, null=True)
+    exchange_rate = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True, verbose_name="Exchange Rate NGN per USD")
+    usd_amount = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True, verbose_name="Original USD Amount")
     category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, default="Receiver")
     description = models.TextField(blank=True, null=True)
     invoice_number = models.CharField(max_length=100, blank=True, null=True)  # NEW FIELD
@@ -453,7 +457,8 @@ class EquipmentType(models.Model):
 
 class Invoice(models.Model):
     invoice_number = models.CharField(max_length=100, unique=True)
-    exchange_rate  = models.DecimalField(max_digits=10, decimal_places=4, blank=True, null=True)
+    exchange_rate = models.DecimalField(max_digits=10, decimal_places=4, blank=True, null=True)
+
     expiry_date    = models.DateField(blank=True, null=True)
     created_at     = models.DateTimeField(auto_now_add=True)
 
@@ -539,6 +544,9 @@ class Sale(models.Model):
         null=True, 
         verbose_name="Import Invoice Number"
     )
+    currency = models.CharField(max_length=3, choices=[("NGN", "Nigerian Naira"), ("USD", "US Dollar")], default="NGN")
+    exchange_rate = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True, verbose_name="Exchange Rate NGN per USD")
+    usd_amount = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True, verbose_name="Original USD Amount")
 
     def __str__(self):
         return f"{self.name} - {self.invoice_number}"
@@ -711,7 +719,7 @@ class Quotation(models.Model):
     document_type = models.CharField(max_length=20, choices=DOCUMENT_TYPES, default='quotation')
     quote_number = models.CharField(max_length=100, unique=True, blank=True)
     name = models.CharField(max_length=255)
-    phone = models.CharField(max_length=20, blank=True, null=True)
+    phone = models.CharField(max_length=20)
     email = models.EmailField(blank=True, null=True)
     state = models.CharField(max_length=100, blank=True, null=True)
     staff = models.CharField(max_length=100, blank=True, null=True)
@@ -732,6 +740,7 @@ class Quotation(models.Model):
     account_number = models.CharField(max_length=50, default="1015175251")
     tin_number = models.CharField(max_length=50, default="31413107-0001")
     footer_note = models.TextField(default="This is a quotation only and does not constitute a final invoice.")
+    currency = models.CharField(max_length=3, choices=[("NGN", "Nigerian Naira"), ("USD", "US Dollar")], default="NGN")
 
     class Meta:
         ordering = ['-date_created', '-id']
@@ -839,6 +848,8 @@ class BatchSerial(models.Model):
     customer_email = models.EmailField(blank=True, null=True)
     customer_name  = models.CharField(max_length=255, blank=True, null=True)
     assigned_date  = models.DateField(blank=True, null=True)
+    month          = models.CharField(max_length=20, blank=True, null=True)
+    year           = models.CharField(max_length=10, blank=True, null=True)
     created_at     = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -1001,3 +1012,35 @@ def sync_single_customer(customer):
     
 
 
+
+
+class InventoryFlag(models.Model):
+    REASON_CHOICES = [
+        ('serial_mismatch', 'Serial Number Mismatch'),
+        ('wrong_category', 'Wrong Category'),
+        ('wrong_cost', 'Wrong Cost'),
+        ('wrong_quantity', 'Wrong Quantity'),
+        ('damaged', 'Damaged Item'),
+        ('other', 'Other'),
+    ]
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('resolved', 'Resolved'),
+        ('dismissed', 'Dismissed'),
+    ]
+
+    tool = models.ForeignKey(Tool, on_delete=models.CASCADE, related_name='flags')
+    flagged_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name='inventory_flags')
+    reason = models.CharField(max_length=50, choices=REASON_CHOICES)
+    note = models.TextField(blank=True, default='')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    admin_note = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    resolved_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='resolved_flags')
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Flag: {self.tool.name} - {self.reason} ({self.status})"
