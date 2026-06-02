@@ -39,6 +39,11 @@ class ToolSerializer(serializers.ModelSerializer):
     equipment_type_id = serializers.CharField(source="equipment_type.id", read_only=True)
     box_type = serializers.CharField(source="description", read_only=True)  # Map description to box_type for frontend
     invoice_no = serializers.CharField(source="invoice_number", read_only=True)  # Map invoice_number to invoice_no
+    has_pending_flag = serializers.SerializerMethodField()
+
+    def get_has_pending_flag(self, obj):
+        from .models import InventoryFlag
+        return InventoryFlag.objects.filter(tool=obj, status='pending').exists()
 
     class Meta:
         model = Tool
@@ -58,6 +63,7 @@ class ToolSerializer(serializers.ModelSerializer):
             "equipment_type_id",  
             "is_enabled",
             "invoice_number",
+            "has_pending_flag",
             "invoice_no",  # Added for frontend compatibility
             "date_added",
             "expiry_date",  # NEW: Added expiry_date
@@ -456,11 +462,14 @@ class InventoryFlagSerializer(serializers.ModelSerializer):
     tool_name = serializers.SerializerMethodField()
     tool_code = serializers.SerializerMethodField()
     tool_category = serializers.SerializerMethodField()
+    tool_serials = serializers.SerializerMethodField()
+    tool_description = serializers.SerializerMethodField()
 
     class Meta:
         model = InventoryFlag
         fields = [
             'id', 'tool', 'tool_name', 'tool_code', 'tool_category',
+            'tool_serials', 'tool_description',
             'flagged_by', 'flagged_by_name', 'reason', 'note',
             'status', 'admin_note', 'created_at', 'resolved_at',
             'resolved_by', 'resolved_by_name',
@@ -479,6 +488,21 @@ class InventoryFlagSerializer(serializers.ModelSerializer):
 
     def get_tool_name(self, obj):
         return obj.tool.name if obj.tool else ""
+
+    def get_tool_serials(self, obj):
+        if not obj.tool:
+            return []
+        serials = obj.tool.serials
+        if not serials:
+            return []
+        if isinstance(serials, list):
+            return serials
+        if isinstance(serials, dict):
+            return list(serials.values())
+        return []
+
+    def get_tool_description(self, obj):
+        return obj.tool.description if obj.tool else "" 
 
     def get_tool_code(self, obj):
         return obj.tool.code if obj.tool else ""

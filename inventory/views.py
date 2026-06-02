@@ -871,6 +871,13 @@ class ToolAssignRandomFromGroupView(APIView):
                 else:
                     if needed_count >= 4: continue
 
+                # Filter by box_type for Base vs Rover
+                box = (tool.description or tool.box_type or "").lower()
+                wants_rover = "rover" in requested_type and "base" not in requested_type
+                wants_base = "base" in requested_type and "rover" not in requested_type
+                if wants_base and box == "rover": continue
+                if wants_rover and box == "base": continue
+
                 if len(tool.available_serials or []) >= needed_count:
                     selected_tool = tool
                     valid_serial_set = tool.get_random_serial_set()
