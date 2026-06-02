@@ -860,6 +860,46 @@ class ToolAssignRandomFromGroupView(APIView):
             
             random.shuffle(items) 
 
+            # For non-Receiver categories skip combo/base/rover logic
+            is_receiver_category = (category or "").lower() in ("receiver",)
+            if not is_receiver_category:
+                for tool in items:
+                    if tool.available_serials and len(tool.available_serials) > 0:
+                        serial = tool.available_serials.pop(0)
+                        tool.stock -= 1
+                        tool.save()
+                        return Response({
+                            "assigned_tool_id": tool.id,
+                            "tool_name": tool.name,
+                            "serial_set": [serial],
+                            "serial_count": 1,
+                            "set_type": category,
+                            "cost": str(tool.cost),
+                            "description": tool.description or "",
+                            "remaining_stock": tool.stock,
+                            "import_invoice": tool.invoice_number,
+                            "datalogger_serial": None,
+                            "external_radio_serial": None
+                        })
+                    else:
+                        tool.stock -= 1
+                        tool.save()
+                        return Response({
+                            "assigned_tool_id": tool.id,
+                            "tool_name": tool.name,
+                            "serial_set": [],
+                            "serial_count": 0,
+                            "set_type": category,
+                            "cost": str(tool.cost),
+                            "description": tool.description or "",
+                            "remaining_stock": tool.stock,
+                            "import_invoice": tool.invoice_number,
+                            "datalogger_serial": None,
+                            "external_radio_serial": None
+                        })
+                return Response({"error": "No " + str(tool_name) + " available."}, status=404)
+
+
             for tool in items:
                 needed_count = tool.get_serial_set_count()
                 
