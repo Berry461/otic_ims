@@ -332,6 +332,42 @@ class AddCustomerView(generics.CreateAPIView):
         )
 
 
+class CustomerUpdateView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrStaff]
+
+    def patch(self, request, pk):
+        from .models import Customer
+        try:
+            customer = Customer.objects.get(pk=pk)
+        except Customer.DoesNotExist:
+            return Response({"detail": "Customer not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        name = request.data.get("name")
+        email = request.data.get("email")
+        phone = request.data.get("phone")
+        state = request.data.get("state")
+
+        if name is not None:
+            customer.name = name
+        if email is not None:
+            customer.email = email
+        if phone is not None:
+            customer.phone = phone
+        if state is not None:
+            customer.state = state
+
+        customer.save()
+
+        return Response({
+            "id": customer.id,
+            "name": customer.name,
+            "email": customer.email,
+            "phone": customer.phone,
+            "state": customer.state,
+            "is_activated": customer.is_activated,
+        }, status=status.HTTP_200_OK)
+
+
 class CustomerListView(generics.ListAPIView):
     serializer_class = CustomerSerializer
     permission_classes = [permissions.IsAuthenticated]

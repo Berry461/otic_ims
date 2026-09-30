@@ -294,6 +294,7 @@ class Tool(models.Model):
     invoice_number = models.CharField(max_length=50, blank=True, null=True)
     date_added = models.DateTimeField(auto_now_add=True)
     expiry_date = models.DateField(null=True, blank=True, verbose_name="Expiry Date")
+    low_stock_notified = models.BooleanField(default=False, verbose_name="Low Stock Alert Sent")
 
     # JSON Storage for Serials
     serials = models.JSONField(default=list, blank=True)

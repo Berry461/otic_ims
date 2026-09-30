@@ -1,3 +1,4 @@
+# Environment files — secrets live here, never commit
 .env
 .env.production
 node_modules/
@@ -9,7 +10,33 @@ id_new_project
 id_new_project.pub
 fix_indent.py
 test.xlsl
-docker-compose.yml
-docker-compose.prod.yml
-Dockerfile
+.env
+.env.local
+.env.prod
+.env.*.local
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+db.sqlite3
+staticfiles/
+media/
+
+# Django
 *.log
+
+# Docker
+docker-compose.override.yml
+
+# OS/editor junk
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Node (if your frontend lives in the same repo)
+node_modules/
+dist/
+build/
