@@ -4,7 +4,7 @@ from .views import (
     ToolListCreateView, ToolDetailView, EquipmentTypeListView, EquipmentTypeDetailView,
     SaleListCreateView, SaleDetailView,CodeBatchListCreateView,CodeBatchItemsView,PublicCodeSearchView,
     PaymentListCreateView, PaymentDetailView,CodeBatchUploadCSVView,CodeBatchDownloadCSVView,
-    DashboardSummaryView, AddCustomerView, CustomerListView, send_sale_email, 
+    DashboardSummaryView, AddCustomerView, CustomerListView, CustomerUpdateView, send_sale_email, 
     SupplierListView, SupplierDetailView, equipment_by_invoice,
     ToolGetRandomSerialView, ToolSoldSerialsView,  ToolGroupedListView, ToolAssignRandomFromGroupView, CustomerOwingDataView, ImportCodesView,
     AssignCodeView, CustomerCodesView, GenerateEmergencyCodeView, AvailableCodesView, ReceiversNeedingCodesView,
@@ -24,6 +24,7 @@ urlpatterns = [
 
     # --- Customers ---
     path("customers/add", AddCustomerView.as_view(), name="add-customer"),
+    path("customers/<int:pk>/", CustomerUpdateView.as_view(), name="customer-update"),
     path("customers/sync-financials/", SyncCustomerFinancialsView.as_view(), name="sync-customer-financials"),
     path("customers/", CustomerListView.as_view(), name="customers"),
     path('customer-owing/', CustomerOwingDataView.as_view(), name='customer-owing-data'),

@@ -332,6 +332,42 @@ class AddCustomerView(generics.CreateAPIView):
         )
 
 
+class CustomerUpdateView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrStaff]
+
+    def patch(self, request, pk):
+        from .models import Customer
+        try:
+            customer = Customer.objects.get(pk=pk)
+        except Customer.DoesNotExist:
+            return Response({"detail": "Customer not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        name = request.data.get("name")
+        email = request.data.get("email")
+        phone = request.data.get("phone")
+        state = request.data.get("state")
+
+        if name is not None:
+            customer.name = name
+        if email is not None:
+            customer.email = email
+        if phone is not None:
+            customer.phone = phone
+        if state is not None:
+            customer.state = state
+
+        customer.save()
+
+        return Response({
+            "id": customer.id,
+            "name": customer.name,
+            "email": customer.email,
+            "phone": customer.phone,
+            "state": customer.state,
+            "is_activated": customer.is_activated,
+        }, status=status.HTTP_200_OK)
+
+
 class CustomerListView(generics.ListAPIView):
     serializer_class = CustomerSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -953,15 +989,18 @@ class ToolRestoreSerialsView(APIView):
         tool_id = request.data.get('tool_id')
         serial_set = request.data.get('serial_set')
         
-        if not tool_id or not serial_set:
+        if not tool_id:
             return Response({"error": "Missing data"}, status=400)
             
         tool = get_object_or_404(Tool, id=tool_id)
-        tool.restore_serials(serial_set)
         
+        if not serial_set:
+            tool.stock += 1
+            tool.save(update_fields=["stock"])
+        else:
+            tool.restore_serials(serial_set)
+            
         return Response({"message": "Stock restored successfully", "new_stock": tool.stock})
-
-
 # NEW: Get random serial number for a tool
 class ToolGetRandomSerialView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -1372,6 +1411,13 @@ class SaleDetailView(generics.RetrieveUpdateDestroyAPIView):
             import json
             for item in instance.items.all():
                 if not item.serial_number:
+                    # Accessory/Others item with no serial — just restore stock by 1
+                    if item.tool:
+                        try:
+                            item.tool.stock += 1
+                            item.tool.save(update_fields=["stock"])
+                        except Exception as e:
+                            print(f"Failed to restore stock for item {item.id}: {e}")
                     continue
                 # Parse serial_number — could be a single serial or JSON array
                 try:
