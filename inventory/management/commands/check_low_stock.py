@@ -1,9 +1,11 @@
+import os
 from django.core.management.base import BaseCommand
 from django.core.mail import send_mail
 from django.db.models import Sum
 from inventory.models import Tool
 
-LOW_STOCK_RECIPIENT = "oticsurveyslagos@gmail.com"
+
+LOW_STOCK_RECIPIENT = os.environ.get("LOW_STOCK_RECIPIENT", "oticsurveyslagos@gmail.com")
 LOW_STOCK_THRESHOLD = 5  # strictly less than this
 
 
