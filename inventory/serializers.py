@@ -177,7 +177,9 @@ class SaleSerializer(serializers.ModelSerializer):
         model = Sale
         fields = [
             "id", "staff", "staff_name", "sold_by", "name", "phone", 
-            "state", "items", "total_cost", "tax_amount", "date_sold", 
+            "state", "items", "total_cost", "tax_amount", 
+            "discount_amount", "shipping_charge", "delivery_charge",
+            "date_sold", 
             "invoice_number", "payment_plan", 'initial_deposit', 
             'payment_months', "due_date", "payment_status", "import_invoice",
             "is_overdue","currency","exchange_rate", "usd_amount",
