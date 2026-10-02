@@ -1255,6 +1255,11 @@ class SaleListCreateView(generics.ListCreateAPIView):
                 Q(items__equipment__icontains=search_query)
             ).distinct()
 
+        # --- 3. Ordering ---
+        ordering = self.request.query_params.get('ordering', '').strip()
+        if ordering in ['invoice_number', '-invoice_number']:
+            queryset = queryset.order_by(ordering, '-id')
+
         return queryset
     
     def list(self, request, *args, **kwargs):
