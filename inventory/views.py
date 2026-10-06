@@ -188,45 +188,57 @@ class StaffSalesView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
+        from .models import SaleItem
+        from django.db.models import Sum, Count
+
         staff_name = request.query_params.get('name', '').strip()
         if not staff_name:
-            return Response(
-                {"detail": "Staff name query param is required."},
-                status=status.HTTP_400_BAD_REQUEST
+            return Response({"detail": "Staff name query param is required."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        category = request.query_params.get('category', '').strip()
+        completed_statuses = ['completed', 'paid', 'fully-paid']
+
+        base = Sale.objects.filter(staff__iexact=staff_name).exclude(payment_status='pending')
+
+        # Dropdown options: categories this staff member has sold (grows automatically)
+        categories = sorted(set(
+            SaleItem.objects.filter(sale__in=base)
+            .exclude(category__isnull=True).exclude(category='')
+            .values_list('category', flat=True)
+        ))
+
+        if category:
+            base = base.filter(
+                id__in=SaleItem.objects.filter(category__iexact=category).values('sale_id')
             )
 
-        sales = Sale.objects.filter(
-            staff__iexact=staff_name
-        ).exclude(
-            payment_status='pending'
-        ).prefetch_related('items').order_by("-date_sold")
+        base = base.prefetch_related('items', 'payment_set').order_by('-date_sold')
 
-        # Summary stats across ALL records before pagination
-        from django.db.models import Sum, Count
-        summary = sales.aggregate(
+        overdue_count = sum(1 for s in base if s.is_overdue)   # same rule as the badge
+
+        agg = base.aggregate(
             total_revenue=Sum('total_cost'),
             total_count=Count('id'),
-            completed_count=Count('id', filter=Q(payment_status__in=['completed', 'paid', 'fully-paid'])),
-            overdue_count=Count('id', filter=Q(payment_status='overdue')),
+            completed_count=Count('id', filter=Q(payment_status__in=completed_statuses)),
         )
 
-        # Pagination
         page_size = int(request.query_params.get('page_size', 10))
         page = int(request.query_params.get('page', 1))
         start = (page - 1) * page_size
-        end = start + page_size
-        paginated = sales[start:end]
+        paginated = base[start:start + page_size]
 
         serializer = SaleSerializer(paginated, many=True, context={"request": request})
         return Response({
-            "count": sales.count(),
+            "count": base.count(),
             "results": serializer.data,
+            "categories": categories,
             "summary": {
-                "total_revenue": float(summary['total_revenue'] or 0),
-                "total_count": summary['total_count'] or 0,
-                "completed_count": summary['completed_count'] or 0,
-                "overdue_count": summary['overdue_count'] or 0,
-            }
+                "total_revenue": float(agg['total_revenue'] or 0),
+                "total_count": agg['total_count'] or 0,
+                "completed_count": agg['completed_count'] or 0,
+                "overdue_count": overdue_count,
+            },
         })
 
 class DisplayStaffListCreateView(generics.ListCreateAPIView):
