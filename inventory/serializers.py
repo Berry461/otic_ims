@@ -172,6 +172,7 @@ class SaleSerializer(serializers.ModelSerializer):
     import_invoice = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     is_overdue = serializers.ReadOnlyField()
     payment_status = serializers.SerializerMethodField()
+    shipments = serializers.SerializerMethodField()
 
     class Meta:
         model = Sale
@@ -182,10 +183,21 @@ class SaleSerializer(serializers.ModelSerializer):
             "date_sold", 
             "invoice_number", "payment_plan", 'initial_deposit', 
             'payment_months', "due_date", "payment_status", "import_invoice",
-            "is_overdue","currency","exchange_rate", "usd_amount",
+            "is_overdue","currency","exchange_rate", "usd_amount", "shipments",
         ]
         read_only_fields = ["staff_name", "sold_by", "date_sold"]
 
+    def get_shipments(self, obj):
+        return [
+            {
+                "id": s.id,
+                "waybill": s.waybill,
+                "status": s.status,
+                "status_label": s.get_status_display(),
+            }
+            for s in obj.shipments.all().order_by("-created_at")
+        ]
+    
     def get_payment_status(self, obj):
         db_status = (obj.payment_status or "ongoing").lower()
 

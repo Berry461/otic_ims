@@ -2,7 +2,7 @@ services:
   db:
     image: postgres:15
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data/
     env_file:
@@ -15,6 +15,11 @@ services:
   web:
     build: .
     command: python manage.py runserver 0.0.0.0:8000
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=1
     volumes:
       - .:/app
     ports:
@@ -26,3 +31,9 @@ services:
 
 volumes:
   postgres_data:
+
+networks:
+  default:
+    driver: bridge
+    driver_opts:
+      com.docker.network.driver.mtu: 1200

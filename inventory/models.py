@@ -1048,3 +1048,69 @@ class InventoryFlag(models.Model):
 
     def __str__(self):
         return f"Flag: {self.tool.name} - {self.reason} ({self.status})"
+
+class Shipment(models.Model):
+    STATUS_CHOICES = [
+        ("not_scanned", "Not yet scanned"),
+        ("created", "Created"), ("pickup_scheduled", "Pickup scheduled"),
+        ("picked_up", "Picked up"), ("in_transit", "In transit"),
+        ("arrived_destination", "Arrived at destination"), ("out_for_delivery", "Out for delivery"),
+        ("delivered", "Delivered"), ("delivery_failed", "Delivery failed"),
+        ("returned", "Returned"), ("cancelled", "Cancelled"), ("exception", "Exception"),
+    ]
+    FINAL_STATUSES = ("delivered", "returned", "cancelled")
+
+    sale = models.ForeignKey("Sale", null=True, blank=True, on_delete=models.SET_NULL, related_name="shipments")
+    carrier = models.CharField(max_length=20, default="gig")
+    waybill = models.CharField(max_length=64, unique=True)
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default="created")
+
+    receiver_name = models.CharField(max_length=200)
+    receiver_phone = models.CharField(max_length=40)
+    receiver_address = models.TextField()
+    receiver_state = models.CharField(max_length=100, blank=True)
+    receiver_station_name = models.CharField(max_length=150, blank=True)
+    pickup_option = models.PositiveSmallIntegerField(default=0)  # 0 home delivery, 1 service centre
+
+    source = models.CharField(max_length=10, default="booked")  # booked here, or tracked (added by waybill)
+    reference = models.CharField(max_length=100, blank=True)
+    destination = models.CharField(max_length=150, blank=True)
+    notes = models.TextField(blank=True)
+    vehicle_type = models.PositiveSmallIntegerField(default=2)
+    is_priority = models.BooleanField(default=False)
+    is_cod = models.BooleanField(default=False)
+    cod_amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    last_sync_error = models.CharField(max_length=200, blank=True)
+
+    items = models.JSONField(default=list)
+    amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    request_payload = models.JSONField(default=dict)
+    response_payload = models.JSONField(default=dict)
+
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
+                                   on_delete=models.SET_NULL, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    last_synced_at = models.DateTimeField(null=True, blank=True)
+    delivered_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.waybill} - {self.receiver_name}"
+
+
+class ShipmentEvent(models.Model):
+    shipment = models.ForeignKey(Shipment, on_delete=models.CASCADE, related_name="events")
+    key = models.CharField(max_length=80)
+    code = models.CharField(max_length=20)
+    status = models.CharField(max_length=30, blank=True)
+    description = models.CharField(max_length=255, blank=True)
+    location = models.CharField(max_length=255, blank=True)
+    occurred_at = models.DateTimeField()
+    raw = models.JSONField(default=dict)
+
+    class Meta:
+        ordering = ["-occurred_at"]
+        unique_together = ("shipment", "key")

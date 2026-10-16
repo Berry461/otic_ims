@@ -12,6 +12,12 @@ from .views import (
     InventoryFlagViewSet, InventoryFlagDetailView, InventoryFlagCountView,
     ToolRestoreSerialsView
 )
+from .shipping_views import (
+    ShippingConfigView, GigStationsView, CheckAddressView, ShipmentQuoteView,
+    ShipmentListCreateView, ShipmentDetailView, ShipmentRefreshView,
+    ShipmentRefreshActiveView, ShipmentStatsView, ShipmentTrackView, ShipmentImportView,
+)
+
 urlpatterns = [
     # --- Auth ---
     path("auth/login/", EmailLoginView.as_view(), name="login"),
@@ -97,5 +103,17 @@ urlpatterns = [
     path('inventory-flags/count/', InventoryFlagCountView.as_view(), name='inventory-flag-count'),
     path('tools/restore-serials/', ToolRestoreSerialsView.as_view(), name='tool-restore-serials'),
     path('inventory-flags/<int:pk>/', InventoryFlagDetailView.as_view(), name='inventory-flag-detail'),
-
+    
+    # Shipments (GIG)
+    path('shipping/config/', ShippingConfigView.as_view(), name='shipping-config'),
+    path('shipping/stations/', GigStationsView.as_view(), name='shipping-stations'),
+    path('shipping/check-address/', CheckAddressView.as_view(), name='shipping-check-address'),
+    path('shipping/quote/', ShipmentQuoteView.as_view(), name='shipping-quote'),
+    path('shipments/', ShipmentListCreateView.as_view(), name='shipments'),
+    path('shipments/stats/', ShipmentStatsView.as_view(), name='shipment-stats'),
+    path('shipments/track/', ShipmentTrackView.as_view(), name='shipment-track'),
+    path('shipments/import/', ShipmentImportView.as_view(), name='shipment-import'),
+    path('shipments/refresh-active/', ShipmentRefreshActiveView.as_view(), name='shipment-refresh-active'),
+    path('shipments/<int:pk>/', ShipmentDetailView.as_view(), name='shipment-detail'),
+    path('shipments/<int:pk>/refresh/', ShipmentRefreshView.as_view(), name='shipment-refresh'),
 ]
