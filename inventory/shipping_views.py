@@ -67,6 +67,12 @@ def _row(s):
         "created_at": s.created_at,
     }
 
+def _point(loc):
+    try:
+        return {"lat": float(loc.get("Latitude")), "lng": float(loc.get("Longitude"))}
+    except (TypeError, ValueError, AttributeError):
+        return None
+
 
 def _detail(s):
     d = _row(s)
@@ -88,6 +94,10 @@ def _detail(s):
              "location": e.location, "occurred_at": e.occurred_at}
             for e in s.events.all()
         ],
+        "map": {
+            "sender": _point(((s.request_payload or {}).get("SenderDetails") or {}).get("SenderLocation")),
+            "receiver": _point(((s.request_payload or {}).get("ReceiverDetails") or {}).get("ReceiverLocation")),
+        },
     })
     return d
 
