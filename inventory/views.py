@@ -18,6 +18,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.shortcuts import get_object_or_404
 from django.db.models import Sum, Count, Max, Q, Case, When, F, FloatField, Subquery, OuterRef
+from django.db.models.functions import Lower, Trim
 from django.core.mail import send_mail, BadHeaderError
 from django.utils import timezone
 from rest_framework.exceptions import PermissionDenied
@@ -184,6 +185,20 @@ class StaffListView(generics.ListAPIView):
         return User.objects.filter(role="staff")
 
 
+import re
+
+
+def _norm_state(value):
+    """'Lagos', ' lagos state ', 'LAGOS STATE' -> 'lagos'"""
+    s = re.sub(r"\s+", " ", (value or "").strip().lower())
+    return re.sub(r"[\s,]*state$", "", s).strip()
+
+
+def _state_regex(name):
+    """Matches 'lagos', 'Lagos State', 'lagos , state' for the normalised name."""
+    return rf"^\s*{re.escape(name)}(\s*,?\s*state)?\s*$"
+
+
 class StaffSalesView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -208,10 +223,23 @@ class StaffSalesView(APIView):
             .values_list('category', flat=True)
         ))
 
+        
+        # State options: every state this staff member has sold to
+        from collections import Counter
+        state_counts = Counter(
+            _norm_state(st) for st in base.values_list('state', flat=True) if _norm_state(st)
+        )
+        states = [{"state": k, "count": v} for k, v in state_counts.most_common()]
+
         if category:
             base = base.filter(
                 id__in=SaleItem.objects.filter(category__iexact=category).values('sale_id')
             )
+
+        
+        state = _norm_state(request.query_params.get('state', ''))
+        if state:
+            base = base.filter(state__iregex=_state_regex(state))
 
         base = base.prefetch_related('items', 'payment_set').order_by('-date_sold')
 
@@ -233,6 +261,7 @@ class StaffSalesView(APIView):
             "count": base.count(),
             "results": serializer.data,
             "categories": categories,
+            "states": states,
             "summary": {
                 "total_revenue": float(agg['total_revenue'] or 0),
                 "total_count": agg['total_count'] or 0,
@@ -1214,8 +1243,10 @@ class SaleListCreateView(generics.ListCreateAPIView):
         start_date    = self.request.query_params.get('start_date', '').strip()
         end_date      = self.request.query_params.get('end_date', '').strip()
 
-        if staff_filter:
-            queryset = queryset.filter(staff__icontains=staff_filter)
+        state_filter = self.request.query_params.get('state', '').strip()
+        if state_filter and not getattr(self, "_ignore_state", False):
+            from django.db.models.functions import Trim
+            queryset = queryset.annotate(state_clean=Trim("state")).filter(state_clean__iexact=state_filter)
 
         if start_date:
             try:
@@ -1295,6 +1326,19 @@ class SaleListCreateView(generics.ListCreateAPIView):
             "overdue_sales": overdue_sales,
             "completed_sales": completed_sales,
         }
+
+        # State options for the dropdown: same filters, but ignoring the state filter itself
+        self._ignore_state = True
+        unfiltered = self.filter_queryset(self.get_queryset())
+        self._ignore_state = False
+        summary_data["by_state"] = list(
+            Sale.objects.filter(id__in=unfiltered.values("id"))
+            .exclude(state__isnull=True).exclude(state="")
+            .annotate(st=Lower(Trim("state")))
+            .values("st")
+            .annotate(count=Count("id"))
+            .order_by("-count")
+        )
 
         # 3. Handle Pagination and inject the summary
         page = self.paginate_queryset(queryset)
