@@ -215,6 +215,9 @@ def validate_address(lat, lng):
         return {"deliverable": bool(data.get("HomeDeliveryStatus")), "lga": data.get("LGAName"), "state": data.get("LGAState")}
     except GigError as e:
         if e.status == 401:  # GIG answers 401 when it can't match a supported LGA
+            if "unavailable" in str(e).lower():
+                # GIG's own lookup is down: we cannot say yes or no
+                return {"deliverable": None, "unavailable": True, "message": str(e)}
             return {"deliverable": False, "message": str(e)}
         raise
 

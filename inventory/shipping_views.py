@@ -278,7 +278,7 @@ class ShipmentQuoteView(APIView):
             return Response({"detail": err}, status=400)
         try:
             check = gig.validate_address(data["receiver"]["lat"], data["receiver"]["lng"])
-            if not check.get("deliverable"):
+            if check.get("deliverable") is False:
                 return Response({"detail": "GIG does not deliver to this location by home delivery. "
                                            "Check the coordinates or try another address.",
                                  "deliverable": False}, status=400)
@@ -288,6 +288,7 @@ class ShipmentQuoteView(APIView):
         name, state = _station_info(data["receiver"]["station_id"])
         return Response({
             "deliverable": True,
+            "address_unverified": bool(check.get("unavailable")),
             "grand_total": quote.get("GrandTotal"),
             "delivery_price": quote.get("DeliverPrice"),
             "pickup_charge": quote.get("PickupCharge"),
@@ -332,7 +333,7 @@ class ShipmentListCreateView(APIView):
         r = data["receiver"]
         try:
             check = gig.validate_address(r["lat"], r["lng"])
-            if not check.get("deliverable"):
+            if check.get("deliverable") is False:
                 return Response({"detail": "GIG does not deliver to this location by home delivery.",
                                  "deliverable": False}, status=400)
             quote = gig.price(gig.build_price_payload(data))
